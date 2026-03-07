@@ -1,9 +1,4 @@
--- This script doesn't work at all on RE8 (Village). This will be helpful for someone later, though: 
--- - https://cdn.discordapp.com/attachments/925838720534446100/1091125439537348628/image.png?ex=65a9a4c0&is=65972fc0&hm=fc9697872bbd65587bd4bb5d148509a497132201128a8176c16cb008511db2dc&
--- - https://cdn.discordapp.com/attachments/925838720534446100/1092203626568613898/image.png?ex=65ad90e4&is=659b1be4&hm=69b6ab91e182c81d6ab45b60afe89672e1423c479c87e780d93dceddbaa8491a&
---
-
--- Also doesn't work with RE4R. Things feel more obscured in this one than the others. Did find:
+-- Doesn't work with RE4R. Things feel more obscured in this one than the others. Did find:
 -- - GameObjects that start with "DropItem_" with a number of question marks after -> chainsaw.DropItem (component)
 --   -> _ItemData -> ItemID, Count, AmmoItemID, AmmoCount, Durability
 --      OR
@@ -75,9 +70,30 @@ function InspectPlayer.GetPosition()
     end
 
     if game == "RE7" or game == "RE8" then
-        local player_object = player.gameobj -- apparently REF defines this?
+        local player_object = player.gameobj -- apparently REF defines this? -- probably just EMV tbh
         local player_transform = player_object:call("get_Transform")
         player_position = player_transform:call("get_Position")
+    end
+
+    if game == "RE9" then
+        local playerLeon = scene:call("findGameObject(System.String)", "cp_A000")
+        local playerGrace = scene:call("findGameObject(System.String)", "cp_A100")
+        local playerMystery = scene:call("findGameObject(System.String)", "cp_A200")
+        local playerTransform
+
+        if playerLeon ~= nil then
+            playerTransform = playerLeon:call("get_Transform()")
+        elseif playerGrace ~= nil then
+            playerTransform = playerGrace:call("get_Transform()")
+        elseif playerMystery ~= nil then
+            playerTransform = playerMystery:call("get_Transform()")
+        else
+            return "Unknown"
+        end
+
+        if playerTransform ~= nil then
+            player_position = playerTransform:call("get_UniversalPosition")
+        end
     end
 
     local x = Inspect._Round(player_position.x)
@@ -204,6 +220,8 @@ function Inspect.GetGameByNamespace()
         -- this is a silly way to tell the difference between RE7 and RE8
         if player.gameobj:get_Name() == "Pl1000" then 
             return "RE7"
+        elseif player == nil then -- for some reason, player doesn't exist in RE9, possibly an EMV change
+            return "RE9"
         else -- player.gameobj:get_Name() == "pl1000"
             return "RE8" 
         end
@@ -339,10 +357,132 @@ function Inspect._SetupHook()
             end)
         end
     end
+
+    if game == "RE9" then
+        local interactType = sdk.find_type_definition(sdk.game_namespace("InteractTrigger"))
+        local interactMethod = interactType:get_method("onProcessEvent")
+
+        sdk.hook(interactMethod, function(args)
+            local objWithTrigger = sdk.to_managed_object(args[2]) -- app.InteractTriggerKeyInput
+        
+            if objWithTrigger == nil then return end
+
+            local obj = objWithTrigger:call("get_TargetGameObject")
+
+            if obj == nil then return end
+
+            --local objName = obj:call("get_Name()")
+            local objItemComp = obj:call("getComponent(System.Type)", sdk.typeof(sdk.game_namespace("ItemCore")))
+            local objGimmickComp = obj:call("getComponent(System.Type)", sdk.typeof(sdk.game_namespace("GimmickCore")))
+            local folderPath = obj:call("get_Folder()"):call("get_Path()")
+            local objPos = obj:call("get_Transform()"):call("get_UniversalPosition()")
+            local posX = string.format("%.2f", objPos:get_field("x"))
+            local posY = string.format("%.2f", objPos:get_field("y"))
+            local posZ = string.format("%.2f", objPos:get_field("z"))
+
+            local parentT = obj:call("get_Transform()"):call("get_Parent()")
+            local parentObj = nil
+            local parentObjName = ""
+
+            if parentT ~= nil then
+                parentObj = parentT:call("get_GameObject()")
+                parentObjName = parentObj:call("get_Name()")
+            end
+
+            local inspectType = nil
+
+            Inspect.Log() -- intentional line break
+
+            if objItemComp ~= nil then
+                local itemID = objItemComp:call("get_ItemID()")
+                local itemIDStr = itemID:call("ToString()")
+                
+                -- local itemContainer = itemContext:call("get_ItemContainer()")
+                -- local parentSpawner = nil
+
+                -- parentSpawner = parentObj:call("getComponent(System.Type)", sdk.typeof(sdk.game_namespace("ItemSpawner")))
+                -- 
+                -- -- the _AssignSectionID values are different between ItemCore and ItemSpawner for enemy-dropped item, for some reason
+
+                inspectType = "ITEM"
+            end -- if objItemComp
+
+            if objGimmickComp ~= nil then
+                local objFileComp = obj:call("getComponent(System.Type)", sdk.typeof(sdk.game_namespace("GmFileV2")))
+                local objLockComp = obj:call("getComponent(System.Type)", sdk.typeof(sdk.game_namespace("GmLockV2")))
+                local objSwitchComp = obj:call("getComponent(System.Type)", sdk.typeof(sdk.game_namespace("GmSwitchV2")))
+
+                if objFileComp ~= nil then
+                    inspectType = "FILE"
+                elseif objLockComp ~= nil and objSwitchComp ~= nil then
+                    inspectType = "LOCK AND SWITCH"
+                elseif objLockComp ~= nil then
+                    inspectType = "LOCK"
+                elseif objSwitchComp ~= nil then
+                    inspectType = "SWITCH"
+                else
+                    inspectType = "MINOR GIMMICK"
+                end
+            end -- if objGimmickComp
+
+
+            if parentT ~= nil then
+                local parentGimmickComp = parentObj:call("getComponent(System.Type)", sdk.typeof(sdk.game_namespace("GimmickCore")))
+
+                if parentGimmickComp ~= nil then
+                    local typewriterComp = parentObj:call("getComponent(System.Type)", sdk.typeof(sdk.game_namespace("GmTypewriterV3")))
+                    local itemboxComp = parentObj:call("getComponent(System.Type)", sdk.typeof(sdk.game_namespace("GmItemBoxV2")))
+                    
+                    if typewriterComp ~= nil then
+                        inspectType = "TYPEWRITER"
+                    elseif itemboxComp ~= nil then
+                        inspectType = "ITEMBOX"
+                    else
+                        inspectType = "GIMMICK"
+                    end
+                end
+            end
+ 
+            if inspectType == nil then
+                inspectType = "UNKNOWN"
+            end
+
+            Inspect.Log("Inspect Type", inspectType)
+            Inspect.Log("Item Object", Inspect._Sanitize(InspectItem.GetName(obj)))
+            Inspect.Log("Parent Object", Inspect._Sanitize(parentObjName))
+            Inspect.Log("Folder Path", Inspect._Sanitize(folderPath))
+            
+            if objItemComp ~= nil then
+                local itemContext = objItemComp:get_field("_Context")
+                local itemContextID = itemContext:call("get_ContextID()"):call("ToString()")
+                local itemStaySection = itemContext:call("get_StaySection()"):call("ToString()")
+                local itemSpawnSection = itemContext:call("get_SpawnSection()"):call("ToString()")
+                local objItemParent = itemContext:call("get_ParentObject()")
+                local objItemParentName = nil
+
+                if objItemParent ~= nil then
+                    objItemParentName = objItemParent:call("get_Name()")
+                end
+                
+                Inspect.Log("Item Context ID", tostring(itemContextID))
+                Inspect.Log("Item Context Parent", Inspect._Sanitize(tostring(objItemParentName)))
+                Inspect.Log("Item Stay Section", tostring(itemStaySection))
+                Inspect.Log("Item Spawn Section", tostring(itemSpawnSection))
+            end
+
+            Inspect.Log("Location Position", "[" .. Inspect._Round(posX) .. ", " .. Inspect._Round(posY) .. ", " .. Inspect._Round(posZ) .. "]")
+            Inspect.Log("Player Position", InspectPlayer.GetPositionString())
+        end,
+        function (ret) return ret end)
+    end
 end
 
 function Inspect._Round(number)
     return math.ceil(number * 100) / 100 -- two decimal places
+end
+
+function Inspect._Sanitize(str)
+    return str:gsub("[^A-Za-z0-9()'-_ /]", ".")
 end
 
 -- this gets used a lot, so just define it outside the function scopes
